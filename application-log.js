@@ -44,7 +44,7 @@ if(require.main === module){
 }
 const EnvironmentPaths = new EnvPaths(PROCESS_NAME);
 
-var date = new Date();
+//var date = new Date();
 const LogLevelsMap = new Map([ //RFC 5424
 	['emerg', 0],
 	['alert', 1],
@@ -72,12 +72,101 @@ var Transports = [
 //	{enabled: true, type: 'stream', name: 'stderr', colour: true, level: 'info'}
 ];
 
-var CyclicalLogState = {
-	current_index: 1, //The value appended to the currently-used log file.
-	file_count: 4, //The number of "tracked" log files including the current log file.
-	current_size: 0 //The size of the currently-used log file; when this is greater than max_size, switch to a new log file.
-};
 //Functions
+/**
+* @fn ApplicationLog_Init
+* @brief Checks and loads the current log-information metadata file, creating it if necessary.
+* @param directory_path
+*	@type String
+*	@brief The directory to store the log metadata file.
+*	@default EnvironmentPaths.log
+* @param file_path
+*	@type String
+*	@brief The name of the log metadata file; defaults to '.log_information.json'
+*	@default '.log_information.json'
+* @return <ARRAY>
+*	@entry 0 
+*		@retval 1 premature return.
+*		@retval 0 on success.
+*		@retval <0 on failure.
+*	@entry 1
+*		@retval <object> on success
+*		@retval <error_message> on failure.
+*/
+function ApplicationLog_Init( directory_path, file_path ){
+	var _return = [1,null];
+	const FUNCTION_NAME = 'ApplicationLog_Init';
+	
+	//Variables
+	var directory_accessible = false;
+	var file_accessible = false;
+	var file_data = null;
+	var stripped_file_data = null;
+	var json_object = {};
+
+	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
+	//Parametre checks
+	if(directory_path == undefined) directory_path = EnvironmentPaths.log;
+	if(file_path == undefined) file_path = '.log_information.json';
+	
+	//Function
+	try{
+		FileSystem.accessSync( directory_path, (FileSystem.constants.F_OK | FileSystem.constants.R_OK | FileSystem.constants.W_OK) );
+		directory_accessible = true;
+	} catch(error){
+		console.error(error);
+		try{
+			FileSystem.mkdirSync(directory_path, {recursive: true});
+			directory_accessible = true;
+		} catch(error){
+			console.error(error);
+			directory_accessible = false;
+		}
+	}
+	if( directory_accessible === true ){
+		try{
+			FileSystem.accessSync( Path.join(directory_path, file_path), (FileSystem.constants.F_OK | FileSystem.constants.R_OK | FileSystem.constants.W_OK) );
+			file_accessible = true;
+		} catch(error){
+			try{
+				FileSystem.writeFileSync( Path.join(directory_path, file_path), '/*.log_information.json: Used by application-log; not intended to be edited by end users.*/\n{\n\ttransports: []\n}', 'utf8');
+				file_accessible = true;
+			} catch(error){
+				console.error(error);
+				file_accessible = false;
+			}
+		}
+	} else{
+		_return = [-4, 'Directory is inaccessible or could not be created.'];
+		file_accessible = false;
+	}
+	if( file_accessible === true ){
+		Metadata.absolute_path = Path.join( directory_path, file_path );
+		file_data = FileSystem.readFileSync( Metadata.absolute_path, 'utf8' );
+		if( file_data != null ){
+			stripped_file_data = StripJSONComments( file_data );
+			if( stripped_file_data != null ){
+				json_object = ParseJSON( stripped_file_data );
+				if( json_object.transports != null ){
+					Transports = json_object.transports;
+					_return = [0,null];
+				} 
+			} else{
+				_return = [-10,Utility.format('Error stripping comments from file_data: %s', file_data)];
+			}
+		} else{
+			_return = [-9,Utility.format('Error reading file: %s', Metadata.absolute_path)];
+		}
+	} else{
+		_return = [-8,'Error metadata file is not readable or cannot be created.'];
+	}
+
+	//Return
+	if( _return[0] !== 0 ){
+		console.error(_return);
+	}
+	return _return;
+}
 /**
 * @fn ApplicationLog_LogDirectory_WriteCheck
 * @brief Checks if the given directory exists and is writable.
@@ -450,6 +539,8 @@ function Log(process_name, module_name, file_name, function_name, level_name, me
 						var colour;
 						switch(level_name){
 							//silent
+							case 'alert':
+							case 'crit':
 							case 'error': colour = Chalk.red; break;
 							//quiet
 							case 'warn': colour = Chalk.yellow; break;
