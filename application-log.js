@@ -42,7 +42,7 @@ if(require.main === module){
 } else{
 	PROCESS_NAME = process.argv0;
 }
-const EnvironmentPaths = new EnvPaths(PROCESS_NAME);
+const EnvironmentPaths = EnvPaths(PROCESS_NAME);
 
 //var date = new Date();
 const LogLevelsMap = new Map([ //RFC 5424
@@ -67,12 +67,150 @@ var Metadata = {
 	access_okay: false
 };
 var Transports = [
-	{enabled: true, type: 'directory', level: 'debug', name: 'log_debug', directory: EnvironmentPaths.log, header: true, cycle_size: 1048576, file_limit: 4, colour: false, callback: null, metadata_file: 'log_information.json' },
+	{enabled: true, type: 'directory', level: 'debug', name: 'log_debug', directory: EnvironmentPaths.log, header: true, cycle_size: 1048576, file_limit: 4, colour: false, callback: null, metadata_file: 'log_information.json', tracked_files: []},
 //	{enabled: true, type: 'file', name: date.toISOString().replace(/[-+:.]/g,'')+'.log', colour: false, level: 'debug'},
-//	{enabled: true, type: 'stream', name: 'stderr', colour: true, level: 'info'}
+	{enabled: true, type: 'stream', name: 'stderr', colour: true, level: 'info'}
 ];
 
 //Functions
+function FileIO_Callback(error){ 
+	if(error != null) console.error('FileIO_Callback error: ', error);
+}
+/**
+* @fn ApplicationLog_TrackedFile_Stat
+* @brief Stats the tracked file of a transport, updating the arrary.
+* @param transport_index
+*	@type Number
+*	@brief The index of the transport.
+*	@default null
+* @param tracked_file_index
+*	@type Number
+*	@brief The index of the tracked file to be stat'd.
+*	@default null
+* @return <ARRAY>
+*	@entry 0 
+*		@retval 1 premature return.
+*		@retval 0 on success.
+*		@retval <0 on failure.
+*	@entry 1
+*		@retval <object> on success
+*		@retval <error_message> on failure.
+*/
+function ApplicationLog_TrackedFile_Stat( transport_index, tracked_file_index ){
+	var _return = [1,null];
+	var function_return = [1,null];
+	const FUNCTION_NAME = 'ApplicationLog_TrackedFile_Stat';
+	//Variables
+
+	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
+	//Parametre checks
+	if(transport_index == undefined) transport_index = null;
+	if(tracked_file_index == undefined) tracked_file_index = null;
+	
+	//Function
+	if( transport_index != null && typeof(transport_index) === 'number' && transport_index < Transports.length ){
+		if( tracked_file_index != null && typeof(tracked_file_index) === 'number' && tracked_file_index < Transports[transport_index].tracked_files[tracked_file_index] ){
+			var file_path = Path.join( Transports[transport_index].directory, Transports[transport_index].tracked_files[tracked_file_index].filename );
+			var filestats = null;
+			try{
+				filestats = FileSystem.statSync(file_path);
+				Transports[transport_index].tracked_files[tracked_file_index].size = filestats.size;
+				Transports[transport_index].tracked_files[tracked_file_index].last_write = filestats.mtime.toISOString();
+				function_return = ApplicationLog_LogMetadata_Write();
+				if( function_return[0] === 0 ){
+					_return = [0,filestats];
+				} else{
+					_return = [function_return[0], 'ApplicationLog_LogMetadata_Write: '+function_return[1]];
+				}
+			} catch(error){
+				_return [-4, Utility.format('Error: calling FileSystem.statSync threw error: %s', error)];
+			}
+		} else{
+			_return = [-3, Utility.format('Error: tracked_file_index is either null, not a number, or not a valid tracked_files index: %o', tracked_file_index)];
+		}
+	} else{
+		_return = [-2, Utility.format('Error: transport_index is either null, not a number, or not a valid Transports index: %o', transport_index)];
+	}
+	//Return
+	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','returned: '+_return.toString());
+	return _return;
+}
+/**
+* @fn ApplicationLog_TrackedFile_Add
+* @brief Adds a new tracked file to transport of the given index.
+* @param transport_index
+*	@type Number
+*	@brief The index of the transport to add a new tracked file to.
+*	@default 0
+* @return <ARRAY>
+*	@entry 0 
+*		@retval 1 premature return.
+*		@retval 0 on success.
+*		@retval <0 on failure.
+*	@entry 1
+*		@retval <object> on success
+*		@retval <error_message> on failure.
+*/
+function ApplicationLog_TrackedFile_Add( transport_index ){
+	var _return = [1,''];
+	var function_return = [1,null];
+	const FUNCTION_NAME = 'ApplicationLog_TrackedFile_Add';
+	//Variables
+	var date = new Date();
+	var new_tracked_file = {
+		filename: '',
+		created: date.toISOString(),
+		last_write: date.toISOString(),
+		size: 0,
+		index: null
+	};
+	var header = '\n';
+	var new_tracked_file_index = null;
+	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
+	//Parametre checks
+	if(transport_index == undefined) transport_index = 0;
+	
+	//Function
+	if( Transports[transport_index].tracked_files.length === 0 ){
+		new_tracked_file.index = 0;
+		new_tracked_file.filename = Transports[transport_index].name + '0.log';
+		Transports[transport_index].tracked_files.push(new_tracked_file);
+	} else{
+		new_tracked_file.index = (Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)].index + 1);
+		new_tracked_file.filename = Transports[transport_index].name + (new_tracked_file.index + 1) + '.log';
+		if( Transports[transport_index].tracked_files.length >= Transports[transport_index].file_limit ){
+			var former_tracked_file = Transports[transport_index].tracked_files.shift();
+			var former_tracked_file_path = Path.join(Transports[transport_index].directory, former_tracked_file.filename);
+			try{
+				FileSystem.unlinkSync( former_tracked_file_path, 'utf8' );
+			} catch(error){
+				_return = [-8, Utility.format('Warn: error when removing former_tracked_file_path: %s', former_tracked_file_path)];
+				console.error(_return[1]);
+			}
+		}
+		new_tracked_file_index = Transports[transport_index].tracked_files.push(new_tracked_file);
+	}
+	if( Transports[transport_index].header === true ){
+		header = Utility.format("#Header\n%o\n%o\n",Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)], Transports[transport_index]);
+	}
+	var new_tracked_file_path = Path.join(Transports[transport_index].directory,Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)].filename);
+	try{
+		FileSystem.appendFileSync( new_tracked_file_path, header, 'utf8');
+		function_return = ApplicationLog_TrackedFile_Stat( transport_index, new_tracked_file_index );
+		if( function_return[0] === 0 ){
+			_return = function_return;
+		} else{
+			_return = [function_return[0], 'ApplicationLog_TrackedFile_Stat: '+function_return[1]];
+		}
+	} catch(error){
+		_return = [-9, Utility.format('Error: writing the header for new_tracked_file_path: %s', new_tracked_file_path)];
+		console.error(_return[1]);
+	}
+	
+	//Return
+	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','returned: '+_return.toString());
+	return _return;
+}
 /**
 * @fn ApplicationLog_Init
 * @brief Checks and loads the current log-information metadata file, creating it if necessary.
@@ -142,10 +280,20 @@ function ApplicationLog_Init( directory_path, file_path ){
 	}
 	if( file_accessible === true ){
 		Metadata.absolute_path = Path.join( directory_path, file_path );
-		file_data = FileSystem.readFileSync( Metadata.absolute_path, 'utf8' );
+		function_return = ApplicationLog_LogMetadata_Read();
+		if( function_return[0] === 0 ){
+			for( var i = 0; i < Transports.length; i++){
+				if( Transports[i].tracked_files.length == 0 ){
+					ApplicationLog_TrackedFile_Add( transport_index );
+					ApplicationLog_TrackedFile_Stat( transport_index, tracked_file_index );
+				}
+			}
+		}
+		/*file_data = FileSystem.readFileSync( Metadata.absolute_path, 'utf8' );
 		if( file_data != null ){
 			stripped_file_data = StripJSONComments( file_data );
 			if( stripped_file_data != null ){
+				console.log('stripped_file_data: %s', stripped_file_data);
 				json_object = ParseJSON( stripped_file_data );
 				if( json_object.transports != null ){
 					Transports = json_object.transports;
@@ -156,7 +304,7 @@ function ApplicationLog_Init( directory_path, file_path ){
 			}
 		} else{
 			_return = [-9,Utility.format('Error reading file: %s', Metadata.absolute_path)];
-		}
+		}*/
 	} else{
 		_return = [-8,'Error metadata file is not readable or cannot be created.'];
 	}
@@ -168,12 +316,8 @@ function ApplicationLog_Init( directory_path, file_path ){
 	return _return;
 }
 /**
-* @fn ApplicationLog_LogDirectory_WriteCheck
-* @brief Checks if the given directory exists and is writable.
-* @param log_directory
-*	@type String
-*	@brief The directory to be write-checked.
-*	@default null
+* @fn ApplicationLog_LogMetadata_Read
+* @brief Read the '.log_information.json' metadata file if it exists.
 * @return <ARRAY>
 *	@entry 0 
 *		@retval 1 premature return.
@@ -183,41 +327,43 @@ function ApplicationLog_Init( directory_path, file_path ){
 *		@retval <object> on success
 *		@retval <error_message> on failure.
 */
-function ApplicationLog_LogDirectory_WriteCheck( log_directory ){
+function ApplicationLog_LogMetadata_Read(){
 	var _return = [1,null];
-	const FUNCTION_NAME = 'ApplicationLog_LogDirectory_WriteCheck';
+	const FUNCTION_NAME = 'ApplicationLog_LogMetadata_Read';
 	//Variables
-	var function_return = [1,null];
+	var metadata_string = null;
+	var stripped_metadata_string = null;
+	var metadata_object = null;
 
 	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
 	//Parametre checks
-	if(log_directory == undefined) log_directory = null;
 	
 	//Function
-	if( log_directory != null && typeof(log_directory) === 'string' ){
+	if( Metadata.absolute_path != null && typeof(Metadata.absolute_path) === 'string' ){
 		try{
-			FileSystem.existsSync( log_directory );
-			function_return[0] = 0;
+			metadata_string = FileSystem.readFileSync( Metadata.absolute_path, 'utf8' );
 		} catch(error){
-			function_return = [-3,error];
+			_return = [-8, Utility.format('Error: reading Metadata.absolute_path: %s: %s', Metadata.absolute_path, error)];
 		}
-		if( function_return[0] === 0 ){ //log_directory exists
-			try{
-				FileSystem.accessSync( log_directory, FileSystem.constants.W_OK | FileSystem.X_OK );
-				function_return[0] = 0;
-			} catch(error){
-				function_return = [-4,error];
+		if( _return[0] === -8 ){
+			stripped_metadata_string = StripJSONComments( metadata_string );
+			if( stripped_metadata_string != null ){
+				metadata_object = ParseJSON( stripped_metadata_string );
+				if( metadata_object != null ){
+					if( Array.isArray(metadata_object.transports) === true ){
+						Transports = metadata_object.transports;
+					} else{
+						_return = [-64, Utility.format('Warn: metadata_object.transports is not an array: %o', metadata_object.transports)];
+					}
+				} else{
+					_return = [-32, Utility.format('Error: parsing stripped_metadata_string: %s', stripped_metadata_string)];
+				}
+			} else{
+				_return = [-16, Utility.format('Error: stripping comments from metadata_string: %s', metadata_string)];
 			}
-			if( function_return[0] === 0 ){ //Write check affirmative.
-				_return = [0,null];
-			} else{ //Write check failure.
-				_return = [function_return[0], 'Error: write check failed with the given error: '+function_return[1]];
-			}
-		} else{ //log_directory does not exist
-			_return =[function_return[0], 'Error: the given log_directory does not exist: '+function_return[1]];
 		}
 	} else{
-		_return = [-2,'Error: argument log_directory is invalid: it should be a non-empty string; the value given is either empty or not a string: '+log_directory];
+		_return = [-4, Utility.format('Warn: Metadata.absolute_path is either null or not a string: %o', Metadata)];
 	}
 
 	//Return
@@ -225,12 +371,8 @@ function ApplicationLog_LogDirectory_WriteCheck( log_directory ){
 	return _return;
 }
 /**
-* @fn ApplicationLog_Metadate_Infer
-* @brief Derives metadata information from the current state on the log directory; in essence, makes a new 'log_information.json' metadata file when it's not present or invalidly formatted.
-* @param log_drectory
-*	@type String
-*	@brief The directory to be read for the inferring the metadata state.
-*	@default null
+* @fn ApplicationLog_LogMetadata_Write
+* @brief Update the '.log_information.json' metadata file to the current transport state.
 * @return <ARRAY>
 *	@entry 0 
 *		@retval 1 premature return.
@@ -240,54 +382,32 @@ function ApplicationLog_LogDirectory_WriteCheck( log_directory ){
 *		@retval <object> on success
 *		@retval <error_message> on failure.
 */
-function ApplicationLog_Metadate_Infer( log_drectory ){
+function ApplicationLog_LogMetadata_Write(){
 	var _return = [1,null];
-	const FUNCTION_NAME = 'ApplicationLog_Metadate_Infer';
+	const FUNCTION_NAME = 'ApplicationLog_LogMetadata_Write';
 	//Variables
+	var metadata_string = null;
 
-	Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
+	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
 	//Parametre checks
-	if(log_drectory == undefined) log_drectory = null;
 	
 	//Function
-			function_return = ApplicationLog_Directory_WriteCheck(log_directory);
-			if( function_return[0] === -3 ){
-				try{
-					FileSystem.mkdirSync( log_directory, {recursive: true} );
-					function_return = [0,null];
-				} catch(error){
-					function_return = [-3,'Error: FileSystem.mkdirSync failed with this error: '+error];
-				}	
-			}
-			if( function_return[0] === 0 ){
-				try{
-					function_return[1] = FileSystem.readdirSync( log_directory, {encoding: 'utf8', withFileTypes: true} );
-					function_return[0] = 0;
-				} catch(error){
-					function_return = [-4,'Error: FileSystem.readdirSync threw this error: '+error];
-				}
-				if( function_return[0] === 0 ){
-					files = function_return[1];
-					transport_state.match_regex = new RegExp(transport_state.base_filename+'(\\d+).log');
-					for(var i = 0; i < files.length; i++){
-						match_result = files[i].match(transport_state.match_regex);
-						if( match_result !== null ){
-							var index_int = parseInt(match_result[1],10);
-							if( Number.isNaN(index_int) === false ){
-								if( index_int >= transport_state.current_index ){
-									transport_state.current_index = index_int;
-								}
-							}
-						}
-					}
-				}
-			}
+	if( Metadata.absolute_path != null && typeof(Metadata.absolute_path) === 'string' ){
+		metadata_string = JSON.stringify( Transports, null, '\t');
+		if( metadata_string != null ){
+			FileSystem.writeFile( Metadata.absolute_path, '/*.log_information.json: Metadata file used by application-log; not intended to be directly edited by end users.*/\n'+metadata_string, 'utf8', FileIO_Callback );
+			_return = [0,null];
+		} else{
+			_return = [-8, Utility.format('Error: couldn\'t stringify transports: %o', Transports)];
+		}
+	} else{
+		_return = [-4, Utility.format('Warn: Metadata.absolute_path is either null or not a string: %o', Metadata)];
+	}
 
 	//Return
-	Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','returned: '+_return.toString());
+	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','returned: '+_return.toString());
 	return _return;
 }
-
 /**
 * @fn ApplicationLog_CycleBusiness
 * @brief Returns the appropriate file to log to, shifting and removing old files as necessary.
@@ -319,8 +439,25 @@ function ApplicationLog_CycleBusiness( transport_index ){
 	
 	//Function
 	if( transport_index != null ){
+		if( Transports[transport_index].tracked_files.length < 1 ){
+			date = new Date();
+			new_tracked_file = {
+				filename: Transports[transport_index].name+'0.log',
+				created: date.toISOString(),
+				last_write: date.toISOString(),
+				size: 0,
+				index: 0
+			};
+			Transports[transport_index].tracked_files.push(new_tracked_file);
+			if( Transports[transport_index].header === true ){
+				header = Utility.format("#Header\n%o\n%o\n",Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)], Transports[transport_index]);
+				console.error(Transports[transport_index].directory);
+				console.error(Transports[transport_index].tracked_files[0].filename);
+				FileSystem.appendFileSync( Path.join(Transports[transport_index].directory,Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)].filename), header, 'utf8');
+			}
+		}
 		tracked_file_index = (Transports[transport_index].tracked_files.length-1);
-		current_file_stats = FileSystem.statSync( Path.join(Transports[transport_index].log_directory, Transports[transport_index].tracked_files[tracked_file_index].filename) );
+		current_file_stats = FileSystem.statSync( Path.join(Transports[transport_index].directory, Transports[transport_index].tracked_files[tracked_file_index].filename) );
 		Transports[transport_index].tracked_files[tracked_file_index].size = current_file_stats.size;
 		Transports[transport_index].tracked_files[tracked_file_index].last_write = current_file_stats.mtime;
 		if( Transports[transport_index].tracked_files[tracked_file_index].size >= Transports[transport_index].cycle_size ){
@@ -339,10 +476,17 @@ function ApplicationLog_CycleBusiness( transport_index ){
 			Transports[transport_index].tracked_files.push(new_tracked_file);
 			if( Transports[transport_index].header === true ){
 				header = Utility.format("#Header\n%o\n%o\n",Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)], Transports[transport_index]);
-				FileSystem.appendFileSync( Path.join(Transports[transport_index].log_directory,Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)].filename), header, 'utf8');
+				FileSystem.appendFileSync( Path.join(Transports[transport_index].directory,Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)].filename), header, 'utf8');
 			}
 		}
-		_return = [0, Path.join(Transports[transport_index].log_directory,Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)])];
+		function_return = ApplicationLog_LogMetadata_Write();
+		if( function_return[0] === 0 ){
+			console.error(Transports[transport_index].directory);
+			console.error(Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)]);
+			_return = [0, Path.join(Transports[transport_index].directory,Transports[transport_index].tracked_files[(Transports[transport_index].tracked_files.length - 1)].filename)];
+		} else{
+			_return = [function_return[0], 'ApplicationLog_LogMetadata_Write: '+function_return[1]];
+		}
 	} else{ //transport_index is null
 		_return = [-2,'Error: parameter invalid; transport_index needs to a non-null number.']
 	}
@@ -431,8 +575,8 @@ function ApplicationLog_Transports_Add( enabled, type, level, name, log_director
 		case 'directory':
 			//Add directory transport
 			tracked_files = [],
-			f\r = ApplicationLog_LogDirectory_WriteCheck(log_directory);
-			if( f\r[0] === 0 ){
+			function_return = ApplicationLog_LogDirectory_WriteCheck(log_directory);
+			if( function_return[0] === 0 ){
 				log_information_data = FileSystem.readFileSync(Path.join(log_directory,'log_information.json'), 'utf8');
 				if( log_information_data != null ){
 					log_information_data_stripped = StripJSONComments(log_information_data);
@@ -462,7 +606,7 @@ function ApplicationLog_Transports_Add( enabled, type, level, name, log_director
 				}
 				Transports.push(transport);
 			} else{
-				_return = f\r;
+				_return = function_return;
 			}
 			break;
 		case 'file':
@@ -484,9 +628,6 @@ function ApplicationLog_Transports_Add( enabled, type, level, name, log_director
 }
 
 
-function appendFile_Callback(error){ 
-	if(error != null) console.error('AppendFile error: ', error);
-}
 
 function ReturnObject(code, message){
 	var return_message = code.toString()+': '+message;
@@ -499,8 +640,9 @@ function ReturnObject(code, message){
 }
 
 function Log(process_name, module_name, file_name, function_name, level_name, message){
-	var _return = [0,null];
+	var _return = [1,null];
 	var error_message = null;
+	var function_return = [1,null];
 	var date = new Date();
 	if(arguments.length > 6){
 		for(var i = 6; i < arguments.length; i++){
@@ -513,7 +655,7 @@ function Log(process_name, module_name, file_name, function_name, level_name, me
 			var message_level = LogLevelsMap.get(level_name);
 			if(message_level <= transport_level){
 				if(Transports[i].type === 'directory'){
-					target_log_file = Path.join(Transports[i].log_directory, (Transports[i].state.file_basename+Transports[i].state.current_index+'.log'));
+					/*target_log_file = Path.join(Transports[i].log_directory, (Transports[i].state.file_basename+Transports[i].state.current_index+'.log'));
 					message = date.toISOString()+' '+process_name+':'+module_name+':'+file_name+':'+function_name+':'+level_name+': '+message+'\n';
 					if( Transports[i].state.current_size < Transports[i].max_size ){
 						FileSystem.appendFile(target_log_file, message, 'utf8', appendFile_Callback);
@@ -521,11 +663,20 @@ function Log(process_name, module_name, file_name, function_name, level_name, me
 						_return[0] = 0;
 					} else{
 						if( Transports[i].state.current_files >== Transports[i].max_files ){
-							FileSystem.unlink(
-
+							FileSystem.unlink(*/
+					function_return = ApplicationLog_CycleBusiness( i );
+					var target_file = null;
+					if( function_return[0] === 0 ){
+						target_file = function_return[1];
+						FileSystem.appendFile(target_file, date.toISOString()+' '+process_name+': '+module_name+': '+function_name+': '+level_name+': '+message+'\n', 'utf8', FileIO_Callback);
+					} else{
+						error_message = 'ApplicationLog_Log: '+function_return[1];
+						console.error(error_message);
+						_return = [function_return[0], error_message];
+					}
 				} else if(Transports[i].type === 'file'){
 					if(Transports[i].name != null){
-						FileSystem.appendFile(Transports[i].name, date.toISOString()+' '+process_name+':'+module_name+':'+file_name+':'+function_name+':'+level_name+': '+message+'\n', 'utf8', appendFile_Callback);
+						FileSystem.appendFile(Transports[i].name, date.toISOString()+' '+process_name+':'+module_name+':'+file_name+':'+function_name+':'+level_name+': '+message+'\n', 'utf8', FileIO_Callback);
 						_return[0] = 1;
 					} else{
 						error_message = Utility.format('Log error: Transports[%d].name is not specified: ', i, Transports[i].name);
@@ -538,8 +689,9 @@ function Log(process_name, module_name, file_name, function_name, level_name, me
 					if(Transports[i].colour === true){
 						var colour;
 						switch(level_name){
-							//silent
+							case 'emerg':
 							case 'alert':
+							//silent
 							case 'crit':
 							case 'error': colour = Chalk.red; break;
 							//quiet
@@ -588,6 +740,11 @@ function Log_Test(){
 
 //Exports and Execution
 if(require.main === module){
+	var function_return = [1,null];
+	function_return = ApplicationLog_Init();
+	if( function_return[0] !== 0 ){
+		console.error('ApplicationLog_Init: %o', function_return);
+	}
 	Log_Test();
 } else{
 	exports.log = Log;
