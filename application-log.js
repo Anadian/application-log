@@ -23,6 +23,7 @@ OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 //Dependencies
 	//Internal
+	const JSONICParse = require('./jsonic-parse.js');
 	//Standard
 	const Utility = require('util');
 	const FileSystem = require('fs');
@@ -30,8 +31,6 @@ OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 	//External
 	const EnvPaths = require('env-paths');
 	const Chalk = require('chalk');
-	const StripJSONComments = require('strip-json-comments');
-	const ParseJSON = require('parse-json');
 
 //Constants
 const FILENAME = 'application-log.js';
@@ -62,14 +61,157 @@ const TransportTypesMap = new Map([
 	['callback', 3]
 ]);
 
-var Metadata = {
-	absolute_path: Path.join( EnvironmentPaths.log, '.log_information.json')
-};
-var Transports = [
-/*	{enabled: true, type: 'directory', level: 'debug', name: 'log_debug', directory: EnvironmentPaths.log, header: true, cycle_size: 1048576, file_limit: 4, colour: false, callback: null, metadata_file: 'log_information.json', tracked_files: []},
-//	{enabled: true, type: 'file', name: date.toISOString().replace(/[-+:.]/g,'')+'.log', colour: false, level: 'debug'},
-	{enabled: true, type: 'stream', name: 'stderr', colour: true, level: 'info'}*/
-];
+//Classes
+class ApplicationLogger {
+	/**
+	* @fn ApplicationLog_Init
+	* @brief Checks and loads the current log-information metadata file, creating it if necessary.
+	* @param directory_path
+	*	@type String
+	*	@brief The directory to store the log metadata file.
+	*	@default EnvironmentPaths.log
+	* @param file_path
+	*	@type String
+	*	@brief The name of the log metadata file; defaults to '.log_information.json'
+	*	@default '.log_information.json'
+	* @return <ARRAY>
+	*	@entry 0 
+	*		@retval 1 premature return.
+	*		@retval 0 on success.
+	*		@retval <0 on failure.
+	*	@entry 1
+	*		@retval <object> on success
+	*		@retval <error_message> on failure.
+	*/
+	constructor( directory_path, file_path ){
+		var _return = [1,null];
+		const FUNCTION_NAME = 'ApplicationLog_Init';
+		this.metadata = {
+			absolute_path: Path.join( EnvironmentPaths.log, '.log_information.json')
+		};
+		this.transports = [];
+		
+		//Variables
+		var directory_accessible = false;
+		var file_accessible = false;
+		var file_data = null;
+		var stripped_file_data = null;
+		var json_object = {};
+
+		//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
+		//Parametre checks
+		if(directory_path == undefined) directory_path = EnvironmentPaths.log;
+		if(file_path == undefined) file_path = '.log_information.json';
+		
+		//Function
+		try{
+			FileSystem.accessSync( directory_path, (FileSystem.constants.F_OK | FileSystem.constants.R_OK | FileSystem.constants.W_OK) );
+			directory_accessible = true;
+		} catch(error){
+			console.error(error);
+			try{
+				FileSystem.mkdirSync(directory_path, {recursive: true});
+				directory_accessible = true;
+			} catch(error){
+				console.error(error);
+				directory_accessible = false;
+			}
+		}
+		if( directory_accessible === true ){
+			try{
+				FileSystem.accessSync( Path.join(directory_path, file_path), (FileSystem.constants.F_OK | FileSystem.constants.R_OK | FileSystem.constants.W_OK) );
+				file_accessible = true;
+			} catch(error){
+				try{
+					FileSystem.writeFileSync( Path.join(directory_path, file_path), '/*.log_information.json: Used by application-log; not intended to be edited by end users.*/\n{\n\t"transports": []\n}\n', 'utf8');
+					file_accessible = true;
+				} catch(error){
+					console.error(error);
+					file_accessible = false;
+				}
+			}
+		} else{
+			_return = [-4, 'Directory is inaccessible or could not be created.'];
+			file_accessible = false;
+		}
+		if( file_accessible === true ){
+			this.metadata.absolute_path = Path.join( directory_path, file_path );
+			function_return = this.Metadata_Read();
+			if( function_return[0] === 0 ){
+				_return = [0,null];
+			} else{
+				_return = [function_return[0], 'ApplicationLog_LogMetadata_Read: '+function_return[1]];
+			}
+		} else{
+			_return = [-8,'Error metadata file is not readable or cannot be created.'];
+		}
+
+		//Return
+		return _return;
+	}
+	/**
+	* @fn ApplicationLog_LogMetadata_Read
+	* @brief Read the '.log_information.json' metadata file if it exists.
+	* @return <ARRAY>
+	*	@entry 0 
+	*		@retval 1 premature return.
+	*		@retval 0 on success.
+	*		@retval <0 on failure.
+	*	@entry 1
+	*		@retval <object> on success
+	*		@retval <error_message> on failure.
+	*/
+	Metadata_Read(){
+		var _return = [1,null];
+		const FUNCTION_NAME = 'ApplicationLog_LogMetadata_Read';
+		//Variables
+		var metadata_string = null;
+		var stripped_metadata_string = null;
+		var metadata_object = null;
+
+		//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
+		//Parametre checks
+		
+		//Function
+		if( Metadata.absolute_path != null && typeof(Metadata.absolute_path) === 'string' ){
+			try{
+				metadata_string = FileSystem.readFileSync( Metadata.absolute_path, 'utf8' );
+			} catch(error){
+				_return = [-8, Utility.format('Warn: error reading Metadata.absolute_path; you probably forgot to call ApplicationLog_Init first: %s: %s', Metadata.absolute_path, error)];
+			}
+			if( _return[0] === 1 ){
+				stripped_metadata_string = StripJSONComments( metadata_string );
+				if( stripped_metadata_string != null ){
+					metadata_object = ParseJSON( stripped_metadata_string );
+					if( metadata_object != null ){
+						if( metadata_object.transports != null){
+							if( Array.isArray(metadata_object.transports) === true ){
+								Transports = metadata_object.transports;
+								_return = [0,null];
+							} else{
+								_return = [-128, Utility.format('Warn: metadata_object.transports is not an array: %o', metadata_object)];
+							}
+						} else{
+							_return = [-64, Utility.format('Error: metadata_object.transports property is missing: %o', metadata_object)];
+						}
+					} else{
+						_return = [-32, Utility.format('Error: parsing stripped_metadata_string: %s', stripped_metadata_string)];
+					}
+				} else{
+					_return = [-16, Utility.format('Error: stripping comments from metadata_string: %s', metadata_string)];
+				}
+			}
+		} else{
+			_return = [-4, Utility.format('Warn: Metadata.absolute_path is either null or not a string: %o', Metadata)];
+		}
+
+		//Return
+		//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','returned: '+_return.toString());
+		return _return;
+	}
+
+}
+
 
 //Functions
 function FileIO_Callback(error){ 
@@ -105,66 +247,6 @@ function UpdateTransportTrackedFileFromFileSystemStat_CallbackUnbound( transport
 	if( _return !== 0 ){
 		console.error(_return);
 	}
-}
-/**
-* @fn ApplicationLog_LogMetadata_Read
-* @brief Read the '.log_information.json' metadata file if it exists.
-* @return <ARRAY>
-*	@entry 0 
-*		@retval 1 premature return.
-*		@retval 0 on success.
-*		@retval <0 on failure.
-*	@entry 1
-*		@retval <object> on success
-*		@retval <error_message> on failure.
-*/
-function ApplicationLog_LogMetadata_Read(){
-	var _return = [1,null];
-	const FUNCTION_NAME = 'ApplicationLog_LogMetadata_Read';
-	//Variables
-	var metadata_string = null;
-	var stripped_metadata_string = null;
-	var metadata_object = null;
-
-	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
-	//Parametre checks
-	
-	//Function
-	if( Metadata.absolute_path != null && typeof(Metadata.absolute_path) === 'string' ){
-		try{
-			metadata_string = FileSystem.readFileSync( Metadata.absolute_path, 'utf8' );
-		} catch(error){
-			_return = [-8, Utility.format('Warn: error reading Metadata.absolute_path; you probably forgot to call ApplicationLog_Init first: %s: %s', Metadata.absolute_path, error)];
-		}
-		if( _return[0] === 1 ){
-			stripped_metadata_string = StripJSONComments( metadata_string );
-			if( stripped_metadata_string != null ){
-				metadata_object = ParseJSON( stripped_metadata_string );
-				if( metadata_object != null ){
-					if( metadata_object.transports != null){
-						if( Array.isArray(metadata_object.transports) === true ){
-							Transports = metadata_object.transports;
-							_return = [0,null];
-						} else{
-							_return = [-128, Utility.format('Warn: metadata_object.transports is not an array: %o', metadata_object)];
-						}
-					} else{
-						_return = [-64, Utility.format('Error: metadata_object.transports property is missing: %o', metadata_object)];
-					}
-				} else{
-					_return = [-32, Utility.format('Error: parsing stripped_metadata_string: %s', stripped_metadata_string)];
-				}
-			} else{
-				_return = [-16, Utility.format('Error: stripping comments from metadata_string: %s', metadata_string)];
-			}
-		}
-	} else{
-		_return = [-4, Utility.format('Warn: Metadata.absolute_path is either null or not a string: %o', Metadata)];
-	}
-
-	//Return
-	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','returned: '+_return.toString());
-	return _return;
 }
 /**
 * @fn ApplicationLog_LogMetadata_Write
@@ -392,7 +474,7 @@ function ApplicationLog_TrackedFile_Add( transport_index ){
 	if( function_return[0] === 0 ){
 		function_return = ApplicationLog_TrackedFile_Stat( transport_index, new_tracked_file_index );
 		if( function_return[0] === 0 ){
-			_return = [0,tracked_file_index];
+			_return = [0,new_tracked_file_index];
 		} else{
 			_return = [function_return[0], 'ApplicationLog_TrackedFile_Stat: '+function_return[1]];
 		}
@@ -403,99 +485,6 @@ function ApplicationLog_TrackedFile_Add( transport_index ){
 	
 	//Return
 	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','returned: '+_return.toString());
-	return _return;
-}
-/**
-* @fn ApplicationLog_Init
-* @brief Checks and loads the current log-information metadata file, creating it if necessary.
-* @param directory_path
-*	@type String
-*	@brief The directory to store the log metadata file.
-*	@default EnvironmentPaths.log
-* @param file_path
-*	@type String
-*	@brief The name of the log metadata file; defaults to '.log_information.json'
-*	@default '.log_information.json'
-* @return <ARRAY>
-*	@entry 0 
-*		@retval 1 premature return.
-*		@retval 0 on success.
-*		@retval <0 on failure.
-*	@entry 1
-*		@retval <object> on success
-*		@retval <error_message> on failure.
-*/
-function ApplicationLog_Init( directory_path, file_path ){
-	var _return = [1,null];
-	const FUNCTION_NAME = 'ApplicationLog_Init';
-	
-	//Variables
-	var directory_accessible = false;
-	var file_accessible = false;
-	var file_data = null;
-	var stripped_file_data = null;
-	var json_object = {};
-
-	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
-	//Parametre checks
-	if(directory_path == undefined) directory_path = EnvironmentPaths.log;
-	if(file_path == undefined) file_path = '.log_information.json';
-	
-	//Function
-	try{
-		FileSystem.accessSync( directory_path, (FileSystem.constants.F_OK | FileSystem.constants.R_OK | FileSystem.constants.W_OK) );
-		directory_accessible = true;
-	} catch(error){
-		console.error(error);
-		try{
-			FileSystem.mkdirSync(directory_path, {recursive: true});
-			directory_accessible = true;
-		} catch(error){
-			console.error(error);
-			directory_accessible = false;
-		}
-	}
-	if( directory_accessible === true ){
-		try{
-			FileSystem.accessSync( Path.join(directory_path, file_path), (FileSystem.constants.F_OK | FileSystem.constants.R_OK | FileSystem.constants.W_OK) );
-			file_accessible = true;
-		} catch(error){
-			try{
-				FileSystem.writeFileSync( Path.join(directory_path, file_path), '/*.log_information.json: Used by application-log; not intended to be edited by end users.*/\n{\n\t"transports": []\n}\n', 'utf8');
-				file_accessible = true;
-			} catch(error){
-				console.error(error);
-				file_accessible = false;
-			}
-		}
-	} else{
-		_return = [-4, 'Directory is inaccessible or could not be created.'];
-		file_accessible = false;
-	}
-	if( file_accessible === true ){
-		Metadata.absolute_path = Path.join( directory_path, file_path );
-		function_return = ApplicationLog_LogMetadata_Read();
-		if( function_return[0] === 0 ){
-			/*for( var i = 0; i < Transports.length; i++){
-				if( Transports[i].tracked_files.length == 0 ){
-					function_return = ApplicationLog_TrackedFile_Add( transport_index );
-					if( function_return[0] === 0 ){
-						_return = [0, null];
-					} else{
-						_return = [function_return[0], 'ApplicationLog_TrackedFile_Add: '+function_return[1]];
-					}
-					//ApplicationLog_TrackedFile_Stat( transport_index, tracked_file_index );
-				}
-			}*/
-			_return = [0,null];
-		} else{
-			_return = [function_return[0], 'ApplicationLog_LogMetadata_Read: '+function_return[1]];
-		}
-	} else{
-		_return = [-8,'Error metadata file is not readable or cannot be created.'];
-	}
-
-	//Return
 	return _return;
 }
 /**
@@ -775,7 +764,18 @@ function ApplicationLog_Log( process_name, module_name, file_name, function_name
 	if(level_name == undefined) level_name = 'debug';
 	if(message == undefined) message = null;
 	
+	if( typeof(message) !== 'string' ){
+		message = Utility.inspect(message);
+	} 
 	if(arguments.length > 6){
+		/*if( /%[a-zA-Z%]/.test(message) === true ){
+			var remaining_arguments = arguments.slice(6);
+			message = Utility.format(message, remaining_arguments);
+			switch(remaining_arguments.length){
+				case 1: message = Utility.format(message, remaining_arguments[0]); break;
+				case 2:	message = Utility.format(message, remaining_arguments[0], remaining_arguments[1]); break;
+			}
+		}*/
 		for(var i = 6; i < arguments.length; i++){
 			message += ('|'+Utility.inspect(arguments[i]));
 		}
