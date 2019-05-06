@@ -1,4 +1,5 @@
 #!/usr/local/bin/node
+'use strict';
 
 /**
 * @file jsonic-parse.js
@@ -44,7 +45,7 @@ if(require.main === module){
 /**
 * @fn JSONIC_Parse_FileData
 * @brief Parse JSONIC-format file_data.
-* @async true
+* @async false
 * @param file_data
 *	@type String
 *	@brief The filedata to be parsed.
@@ -58,14 +59,14 @@ if(require.main === module){
 *		@retval <object> on success
 *		@retval <error_message> on failure.
 */
-async function JSONIC_Parse_FileData( file_data ){
+function JSONIC_Parse_FileData( file_data ){
 	var _return = [1,null];
 	const FUNCTION_NAME = 'JSONIC_Parse_FileData';
 	//Variables
 	var stripped_file_data = '';
 	var json_object = null;
 
-	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
+	console.error(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug',Utility.format('received: %o',arguments));
 	//Parametre checks
 	if(file_data == undefined) file_data = null;
 	
@@ -87,13 +88,13 @@ async function JSONIC_Parse_FileData( file_data ){
 	}
 
 	//Return
-	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','returned: '+_return.toString());
+	console.error(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug',Utility.format('returned: %o', _return));
 	return _return;
 }
 /**
 * @fn JSONIC_Parse_FilePath
 * @brief Parse a JSONIC format file with the given path and return the parsed JSON object.
-* @async true
+* @async false
 * @param file_path
 *	@type String
 *	@brief The path to read for file data.
@@ -107,18 +108,19 @@ async function JSONIC_Parse_FileData( file_data ){
 *		@retval <object> on success
 *		@retval <error_message> on failure.
 */
-async function JSONIC_Parse_FilePath( file_path ){
+function JSONIC_Parse_FilePath( file_path ){
 	var _return = [1,null];
 	const FUNCTION_NAME = 'JSONIC_Parse_FilePath';
 	//Variables
 	var function_return = [1,null];
 	var file_data = '';
 
-	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','received: '+arguments.toString());
+	console.error(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug',Utility.format('received: %o',arguments));
 	//Parametre checks
-	if(file_path == undefined) file_path = null;
+	if(file_path === undefined) file_path = null;
 	
 	//Function
+	//console.error(file_path);
 	if( file_path != null && typeof(file_path) === 'string' ){
 		try{ 
 			file_data = FileSystem.readFileSync( file_path, 'utf8' );
@@ -127,18 +129,21 @@ async function JSONIC_Parse_FilePath( file_path ){
 		}
 		if( _return[0] === 1 && file_data != null && typeof(file_data) === 'string' ){
 			function_return = JSONIC_Parse_FileData( file_data );
+			console.error(function_return);
 			if( function_return[0] === 0 ){
 				_return = function_return;
 			} else{
 				_return = [function_return[0], 'JSONIC_Parse_FileData: '+function_return[1]];
 			}
+		} else{
+			console.error('%o, %o', _return, file_data);
 		}
 	} else{
 		_return = [-2, 'Error: file_path is either null or not a string: '+file_path];
 	}
 
 	//Return
-	//Log.log(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug','returned: '+_return.toString());
+	console.error(PROCESS_NAME,MODULE_NAME,FILENAME,FUNCTION_NAME,'debug',Utility.format('returned: %o', _return));
 	return _return;
 }
 
